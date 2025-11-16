@@ -1,21 +1,13 @@
 # Multi-stage Docker build for production
 # Builds client + server and packages them together
 
-# Build stage 1: Build React frontend
+# Build stage 1: Build React frontend from local monorepo sources
 FROM node:18-alpine AS client-builder
-
-# Install git to clone the client repo (avoids submodule issues on remote builders)
-RUN apk add --no-cache git
-
-# Allow overriding the client repo and ref at build time
-ARG CLIENT_REPO_URL=https://github.com/Jdpatel180296/client.git
-ARG CLIENT_REF=main
-
-# Clone and build the client
-RUN git clone --depth 1 --branch "$CLIENT_REF" "$CLIENT_REPO_URL" /app/client
 WORKDIR /app/client
-# Use npm install to support builds without a lockfile
-RUN npm install && npm run build
+COPY client/package*.json ./
+RUN npm install
+COPY client ./
+RUN npm run build
 
 # Build stage 2: Prepare server
 FROM node:18-alpine AS server-builder

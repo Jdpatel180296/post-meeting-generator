@@ -8,10 +8,20 @@ module.exports = {
   knex,
 
   async getMeetingById(id) {
-    return await knex("meetings").where({ id }).first();
+    const meeting = await knex("meetings").where({ id }).first();
+    if (meeting && meeting.platform_link) {
+      meeting.meeting_url = meeting.platform_link;
+      delete meeting.platform_link; // Remove platform_link from response
+    }
+    return meeting;
   },
 
   async createOrUpdateMeeting(meeting) {
+    console.log("[DB] createOrUpdateMeeting received:", {
+      id: meeting.id,
+      meeting_url: meeting.meeting_url,
+    });
+
     const insert = {
       id: meeting.id,
       user_id: meeting.user_id || null,
@@ -20,10 +30,13 @@ module.exports = {
       start_time: meeting.start_time ? new Date(meeting.start_time) : null,
       end_time: meeting.end_time ? new Date(meeting.end_time) : null,
       platform: meeting.platform || "unknown",
-      platform_link: meeting.platform_link || null,
+      platform_link: meeting.meeting_url || null, // Store meeting_url in platform_link column
       attendees: meeting.attendees ? JSON.stringify(meeting.attendees) : null,
       notetaker_enabled: !!meeting.notetaker_enabled,
     };
+
+    console.log("[DB] Inserting meeting_url:", insert.platform_link);
+
     // upsert using ON CONFLICT (id)
     await knex.raw(
       `INSERT INTO meetings (${Object.keys(insert).join(
@@ -35,7 +48,9 @@ module.exports = {
         .join(",")}`,
       Object.values(insert)
     );
-    return await this.getMeetingById(meeting.id);
+    const saved = await this.getMeetingById(meeting.id);
+    console.log("[DB] Saved meeting meeting_url:", saved?.meeting_url);
+    return saved;
   },
 
   async createRecallBot({ meeting_id, recall_bot_id, status = "scheduled" }) {

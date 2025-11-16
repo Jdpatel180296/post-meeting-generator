@@ -21,14 +21,36 @@ const express = require("express");
 const session = require("express-session");
 const { google } = require("googleapis");
 const bodyParser = require("body-parser");
+const cors = require("cors");
 const axios = require("axios");
 const { transcribeUrl } = require("./utils/assemblyClient");
 const path = require("path");
 
 const app = express();
+
+// CORS configuration for production
+const corsOptions = {
+  origin:
+    process.env.NODE_ENV === "production"
+      ? [process.env.FRONTEND_URL, process.env.BACKEND_URL].filter(Boolean)
+      : ["http://localhost:3000", "http://localhost:4000"],
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
 app.use(bodyParser.json());
 app.use(
-  session({ secret: "dev-secret", resave: false, saveUninitialized: true })
+  session({
+    secret: process.env.SESSION_SECRET || "dev-secret",
+    resave: false,
+    saveUninitialized: true,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    },
+  })
 );
 
 // === CONFIG - replace these with values from your Google Cloud Console ===
@@ -90,9 +112,10 @@ app.get("/oauth2callback", async (req, res) => {
     );
     if (!exists) LINKED_ACCOUNTS_STORE[demoUser].push(account);
 
-    // redirect back to client app (client should be running at :3000)
+    // redirect back to client app (support both dev and production)
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     return res.redirect(
-      "http://localhost:3000/?linked=" + encodeURIComponent(account.email)
+      `${frontendUrl}/?linked=${encodeURIComponent(account.email)}`
     );
   } catch (err) {
     console.error(err);
@@ -369,7 +392,12 @@ app.get("/api/accounts", (req, res) => {
 app.get("/api/events", async (req, res) => {
   const demoUser = getDemoUserId(req);
   const accounts = LINKED_ACCOUNTS_STORE[demoUser] || [];
-  const now = new Date().toISOString();
+  const now = new Date();
+  // limit events to a 2-month window to avoid returning events decades in the future
+  const timeMaxDate = new Date(now);
+  timeMaxDate.setMonth(timeMaxDate.getMonth() + 2);
+  const timeMinIso = now.toISOString();
+  const timeMaxIso = timeMaxDate.toISOString();
 
   const allEvents = [];
   for (const acct of accounts) {
@@ -380,7 +408,8 @@ app.get("/api/events", async (req, res) => {
     try {
       const resp = await calendar.events.list({
         calendarId: "primary",
-        timeMin: now,
+        timeMin: timeMinIso,
+        timeMax: timeMaxIso,
         singleEvents: true,
         orderBy: "startTime",
         maxResults: 50,
@@ -408,6 +437,128 @@ app.get("/api/events", async (req, res) => {
   res.json(normalized);
 });
 
+// Debug endpoint: return events plus detected link candidates (hangoutLink, location, conference entryPoints)
+app.get("/api/events/debug", async (req, res) => {
+  try {
+    const demoUser = getDemoUserId(req);
+    const accounts = LINKED_ACCOUNTS_STORE[demoUser] || [];
+    const now = new Date();
+    // limit events to a 2-month window so debug output stays small and relevant
+    const timeMaxDate = new Date(now);
+    timeMaxDate.setMonth(timeMaxDate.getMonth() + 2);
+    const timeMinIso = now.toISOString();
+    const timeMaxIso = timeMaxDate.toISOString();
+
+    const allEvents = [];
+    for (const acct of accounts) {
+      const oauth2Client = oauth2ClientFactory();
+      oauth2Client.setCredentials(acct.tokens);
+      const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+      try {
+        const resp = await calendar.events.list({
+          calendarId: "primary",
+          timeMin: timeMinIso,
+          timeMax: timeMaxIso,
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 50,
+        });
+        const items = resp.data.items || [];
+        items.forEach((it) =>
+          allEvents.push({ accountEmail: acct.email, event: it })
+        );
+      } catch (err) {
+        console.error("Error fetching events for", acct.email, err.message);
+      }
+    }
+
+    const debug = allEvents.map(({ accountEmail, event }) => {
+      const hangoutLink = event.hangoutLink || null;
+      const location = event.location || null;
+      let entryPoint = null;
+      try {
+        const eps = event.conferenceData?.entryPoints || [];
+        const ep = eps.find((p) => p.uri || p.entryPointUri || p.label);
+        if (ep) entryPoint = ep.uri || ep.entryPointUri || null;
+      } catch (e) {
+        /* ignore */
+      }
+
+      const detected = hangoutLink || location || entryPoint || null;
+
+      // log summary for debugging
+      console.log("[Events Debug]", event.id || event.summary, {
+        accountEmail,
+        hangoutLink: !!hangoutLink,
+        location: !!location,
+        entryPoint: !!entryPoint,
+        detected: !!detected,
+      });
+
+      return {
+        id: accountEmail + "|" + (event.id || event.summary || Math.random()),
+        accountEmail,
+        summary: event.summary || "(no title)",
+        start: event.start ? event.start.dateTime || event.start.date : null,
+        raw: event,
+        candidates: { hangoutLink, location, entryPoint },
+        detectedLink: detected,
+      };
+    });
+
+    res.json(debug);
+  } catch (err) {
+    console.error("Error in /api/events/debug", err);
+    res
+      .status(500)
+      .json({ error: "failed to fetch debug events", details: err?.message });
+  }
+});
+
+// Debug: return DB state for meetings, recall_bots and recall_media to help diagnose scheduling
+app.get("/api/debug/state", async (req, res) => {
+  try {
+    const db = require("./db");
+    const meetings = await db
+      .knex("meetings")
+      .select(
+        "id",
+        "summary",
+        "start_time",
+        "platform",
+        "platform_link as meeting_url",
+        "notetaker_enabled"
+      );
+    const bots = await db
+      .knex("recall_bots")
+      .select(
+        "id",
+        "meeting_id",
+        "recall_bot_id",
+        "status",
+        "last_checked_at",
+        "created_at"
+      );
+    const media = await db
+      .knex("recall_media")
+      .select(
+        "id",
+        "meeting_id",
+        "audio_url",
+        "video_url",
+        "transcript",
+        "created_at"
+      );
+    res.json({ meetings, bots, media });
+  } catch (err) {
+    console.error("Error in /api/debug/state", err);
+    res
+      .status(500)
+      .json({ error: "failed to fetch debug state", details: err?.message });
+  }
+});
+
 // schedule recall bot for meeting
 app.post("/api/schedule-recall-bot", async (req, res) => {
   try {
@@ -418,8 +569,23 @@ app.post("/api/schedule-recall-bot", async (req, res) => {
     const meeting = await db.getMeetingById(meetingId);
     if (!meeting) return res.status(404).json({ error: "meeting not found" });
 
+    // Log the fields we search for a link on so we can debug source of meeting links
+    console.log("[Schedule] fetching link for meetingId=", meetingId, {
+      meeting_url: meeting.meeting_url || null,
+      location: meeting.location || null,
+      summary: meeting.summary || null,
+      description: meeting.description || null,
+    });
+
     const { extractPlatformAndLink } = require("./utils/extractPlatform");
-    const { platform, link } = extractPlatformAndLink(meeting);
+    const { platform, link, source } = extractPlatformAndLink(meeting);
+
+    console.log("[Schedule] extractPlatformAndLink result for", meetingId, {
+      platform: platform || null,
+      link: link || null,
+      source: source || null,
+    });
+
     if (!link) return res.status(400).json({ error: "no meeting link found" });
 
     const joinAt = new Date(
@@ -429,12 +595,20 @@ app.post("/api/schedule-recall-bot", async (req, res) => {
     try {
       const recall = require("./recallClient");
       const payload = {
-        join_url: link,
-        call_id: meetingId,
-        join_at: joinAt.toISOString(),
+        meeting_url: link,
+        bot_name: `Bot for ${meeting.summary || meetingId}`,
       };
-      const r = await recall.post("/bots/create_join_bot", payload);
-      const recallBotId = r.data?.bot?.id || r.data?.id;
+
+      // Debug: Check API key
+      const apiKey = process.env.RECALL_API_KEY;
+      console.log("[Recall] API Key present:", !!apiKey);
+      console.log("[Recall] API Key length:", apiKey?.length);
+      console.log("[Recall] API Key first 10 chars:", apiKey?.substring(0, 10));
+      console.log("[Recall] Calling API with payload:", payload);
+
+      const r = await recall.post("/bot", payload);
+      console.log("[Recall] API response:", r.data);
+      const recallBotId = r.data?.id || r.data?.bot?.id;
 
       await db.createRecallBot({
         meeting_id: meetingId,
@@ -445,9 +619,38 @@ app.post("/api/schedule-recall-bot", async (req, res) => {
       return res.json({ ok: true, recallBotId });
     } catch (err) {
       console.error("recall create error", err?.response?.data || err.message);
+
+      // Check if error response is HTML (authentication failure)
+      const errorData = err?.response?.data;
+      let errorMessage = err.message;
+
+      if (
+        typeof errorData === "string" &&
+        errorData.includes("<!DOCTYPE html>")
+      ) {
+        // Extract the error title from HTML if possible
+        const titleMatch = errorData.match(/<title>(.*?)<\/title>/);
+        const h1Match = errorData.match(/<h1[^>]*>(.*?)<\/h1>/);
+
+        if (titleMatch || h1Match) {
+          errorMessage = (
+            titleMatch?.[1] ||
+            h1Match?.[1] ||
+            "Authentication failed"
+          ).replace(/<[^>]*>/g, "");
+        } else {
+          errorMessage =
+            "Recall.ai API authentication failed - please check your RECALL_API_KEY";
+        }
+      }
+
       return res.status(500).json({
         error: "recall create failed",
-        details: err?.response?.data || err.message,
+        message: errorMessage,
+        hint:
+          typeof errorData === "string" && errorData.includes("CSRF")
+            ? "Invalid or expired API key. Please update RECALL_API_KEY in .env file"
+            : undefined,
       });
     }
   } catch (err) {
@@ -481,9 +684,21 @@ app.get("/api/notetaker-flags", (req, res) => {
 app.get("/api/past-meetings", async (req, res) => {
   try {
     const db = require("./db");
-    // In production, would get user_id from real auth
-    const demoUser = getDemoUserId(req);
-    const meetings = await db.getPastMeetings(demoUser);
+    // Get all meetings with transcripts (not filtered by user for now)
+    const meetings = await db
+      .knex("meetings")
+      .leftJoin("recall_media", "meetings.id", "recall_media.meeting_id")
+      .select(
+        "meetings.id",
+        "meetings.summary",
+        "meetings.start_time as start",
+        "meetings.end_time as end",
+        "meetings.platform",
+        db.knex.raw("recall_media.transcript IS NOT NULL as has_transcript")
+      )
+      .where("meetings.start_time", "<", db.knex.fn.now())
+      .orderBy("meetings.start_time", "desc");
+
     res.json(meetings);
   } catch (err) {
     console.error("Error fetching past meetings:", err);
@@ -631,6 +846,45 @@ app.get("/api/automations", async (req, res) => {
   }
 });
 
+// Create or update a meeting record in our DB (used before scheduling a recall bot)
+app.post("/api/meetings", async (req, res) => {
+  try {
+    const meeting = req.body;
+    if (!meeting || !meeting.id)
+      return res.status(400).json({ error: "meeting id required" });
+    const db = require("./db");
+    const saved = await db.createOrUpdateMeeting(meeting);
+    console.log("[Meetings] saved meeting", {
+      id: saved.id,
+      meeting_url: saved.meeting_url || null,
+      location: saved.location || null,
+      summary: saved.summary || null,
+    });
+    res.json(saved);
+  } catch (err) {
+    console.error("Error saving meeting:", err);
+    res
+      .status(500)
+      .json({ error: "Failed to save meeting", details: err?.message });
+  }
+});
+
+// Get recall bots for a meeting (status, timestamps)
+app.get("/api/meetings/:id/recall-bots", async (req, res) => {
+  try {
+    const meeting_id = req.params.id;
+    const db = require("./db");
+    const bots = await db
+      .knex("recall_bots")
+      .where({ meeting_id })
+      .select("id", "recall_bot_id", "status", "last_checked_at", "created_at");
+    res.json(bots || []);
+  } catch (err) {
+    console.error("Error fetching recall bots:", err);
+    res.status(500).json({ error: "Failed to fetch recall bots" });
+  }
+});
+
 // Create automation
 app.post("/api/automations", async (req, res) => {
   try {
@@ -754,9 +1008,9 @@ app.listen(PORT, () => console.log("Server listening on", PORT));
 // If client build/ exists, copy it to server/public and this will serve it
 const publicPath = path.join(__dirname, "public");
 app.use(express.static(publicPath));
-// SPA fallback: for any route not matched by API, serve index.html
-// This allows React Router to handle client-side routing
-app.get("*", (req, res) => {
+// SPA fallback: for any non-API route, serve index.html so React Router can handle client-side routing.
+// Use a regex route to avoid path-to-regexp parameter parsing issues (and avoid matching /api/*).
+app.get(/^\/(?!api).*/, (req, res) => {
   const indexPath = path.join(publicPath, "index.html");
   res.sendFile(indexPath, (err) => {
     if (err) {

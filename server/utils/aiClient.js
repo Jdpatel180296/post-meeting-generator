@@ -1,9 +1,40 @@
 // server/utils/aiClient.js
-const OpenAI = require("openai");
+const axios = require("axios");
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Ollama configuration
+const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "mistral";
+
+async function callOllamaChat(messages, opts = {}) {
+  if (!OLLAMA_URL) {
+    throw new Error("OLLAMA_URL not configured in environment");
+  }
+
+  try {
+    const res = await axios.post(
+      `${OLLAMA_URL}/api/chat`,
+      {
+        model: OLLAMA_MODEL,
+        messages,
+        ...opts,
+      },
+      { timeout: 120000 }
+    );
+
+    // Ollama's chat API typically returns { choices: [ { message: { content } } ] }
+    if (res.data?.choices?.[0]?.message?.content) {
+      return res.data.choices[0].message.content;
+    }
+
+    // Fallbacks for different response shapes
+    if (typeof res.data === "string") return res.data;
+    if (res.data?.text) return res.data.text;
+    return JSON.stringify(res.data);
+  } catch (err) {
+    console.error("Ollama error:", err?.response?.data || err.message);
+    throw err;
+  }
+}
 
 async function generateSocialPost({
   transcript,
@@ -11,65 +42,43 @@ async function generateSocialPost({
   customPrompt,
   meetingSummary,
 }) {
-  if (!openai.apiKey) {
-    throw new Error("OPENAI_API_KEY not set in environment");
-  }
-
-  const systemPrompt = `You are an expert social media content writer. Generate a compelling, professional social media post based on the provided meeting transcript and custom instructions.
-Platform: ${platform}
-Keep the tone appropriate for the platform (LinkedIn is professional, Facebook can be more casual/friendly).
-Keep posts concise and engaging.
-${customPrompt ? `Additional instructions: ${customPrompt}` : ""}`;
+  const systemPrompt = `You are an expert social media content writer. Generate a compelling, professional social media post based on the provided meeting transcript and custom instructions.\nPlatform: ${platform}\nKeep the tone appropriate for the platform (LinkedIn is professional, Facebook can be more casual/friendly).\nKeep posts concise and engaging.${
+    customPrompt ? ` Additional instructions: ${customPrompt}` : ""
+  }`;
 
   const userMessage = `Meeting transcript:\n${transcript}\n\n${
     meetingSummary ? `Meeting summary: ${meetingSummary}` : ""
-  }
-  
-Please generate an engaging social media post for ${platform} based on the meeting. Include relevant hashtags if appropriate for the platform.`;
+  }\n\nPlease generate an engaging social media post for ${platform} based on the meeting. Include relevant hashtags if appropriate for the platform.`;
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-      temperature: 0.7,
-      max_tokens: 500,
-    });
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userMessage },
+  ];
 
-    return response.choices[0]?.message?.content || "";
-  } catch (err) {
-    console.error("OpenAI error:", err);
-    throw err;
-  }
+  const text = await callOllamaChat(messages, {
+    max_tokens: 500,
+    temperature: 0.7,
+  });
+  return (text || "").toString();
 }
 
 async function generateFollowUpEmail({ transcript, meetingSummary }) {
-  if (!openai.apiKey) {
-    throw new Error("OPENAI_API_KEY not set in environment");
-  }
+  const system =
+    "You are an expert at writing professional follow-up emails after meetings. Generate a concise, friendly follow-up email that recaps what was discussed.";
+  const user = `Meeting transcript:\n${transcript}\n\n${
+    meetingSummary ? `Meeting summary: ${meetingSummary}` : ""
+  }\n\nPlease generate a professional follow-up email that summarizes the meeting discussion and next steps.`;
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an expert at writing professional follow-up emails after meetings. Generate a concise, friendly follow-up email that recaps what was discussed.",
-      },
-      {
-        role: "user",
-        content: `Meeting transcript:\n${transcript}\n\n${
-          meetingSummary ? `Meeting summary: ${meetingSummary}` : ""
-        }\n\nPlease generate a professional follow-up email that summarizes the meeting discussion and next steps.`,
-      },
-    ],
-    temperature: 0.7,
+  const messages = [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+
+  const text = await callOllamaChat(messages, {
     max_tokens: 800,
+    temperature: 0.7,
   });
-
-  return response.choices[0]?.message?.content || "";
+  return (text || "").toString();
 }
 
 module.exports = {

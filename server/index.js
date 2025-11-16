@@ -44,7 +44,17 @@ const corsOptions = {
   optionsSuccessStatus: 200,
 };
 
+// Log the CORS origin and incoming Origin for easier diagnostics
+app.use((req, res, next) => {
+  if (req.headers.origin) {
+    console.log("[CORS] Origin:", req.headers.origin);
+  }
+  next();
+});
+
 app.use(cors(corsOptions));
+// Explicitly handle preflight for all routes
+app.options("*", cors(corsOptions));
 app.use(bodyParser.json());
 app.use(
   session({
@@ -54,6 +64,8 @@ app.use(
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
+      // Required for cross-site cookies when frontend and backend are on different domains
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
   })

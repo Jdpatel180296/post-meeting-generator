@@ -3,17 +3,26 @@
 
 # Build stage 1: Build React frontend
 FROM node:18-alpine AS client-builder
+
+# Install git to clone the client repo (avoids submodule issues on remote builders)
+RUN apk add --no-cache git
+
+# Allow overriding the client repo and ref at build time
+ARG CLIENT_REPO_URL=https://github.com/Jdpatel180296/client.git
+ARG CLIENT_REF=main
+
+# Clone and build the client
+RUN git clone --depth 1 --branch "$CLIENT_REF" "$CLIENT_REPO_URL" /app/client
 WORKDIR /app/client
-COPY client/package*.json ./
-RUN npm ci --only=production
-COPY client ./
-RUN npm run build
+# Use npm install to support builds without a lockfile
+RUN npm install && npm run build
 
 # Build stage 2: Prepare server
 FROM node:18-alpine AS server-builder
 WORKDIR /app/server
 COPY server/package*.json ./
-RUN npm ci --only=production
+# Use npm install to support builds without a lockfile; omit dev deps for smaller image
+RUN npm install --omit=dev
 COPY server ./
 
 # Final stage: Runtime
@@ -40,5 +49,5 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:4000/api/accounts', (r) => {if (r.statusCode !== 200 && r.statusCode !== 401) throw new Error(r.statusCode)})"
 
-# Start server
-CMD ["npm", "run", "start"]
+# Start server (run migrations, then start)
+CMD ["npm", "run", "start:prod"]

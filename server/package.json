@@ -9,7 +9,7 @@
     "migrate": "knex --knexfile ./db/knexfile.js migrate:latest",
     "migrate:rollback": "knex --knexfile ./db/knexfile.js migrate:rollback",
     "poll": "node poller-runner.js",
-    "postinstall": "npm run migrate"
+    "start:prod": "knex --knexfile ./db/knexfile.js migrate:latest && node index.js"
   },
   "keywords": [],
   "author": "",

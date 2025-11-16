@@ -28,6 +28,12 @@ const path = require("path");
 
 const app = express();
 
+// Behind Railway/Render proxies, trust the first proxy hop so Express
+// correctly recognizes HTTPS via X-Forwarded-Proto and sets secure cookies.
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
 // CORS configuration for production
 const corsOptions = {
   origin:

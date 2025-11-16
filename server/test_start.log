@@ -1,0 +1,6 @@
+
+> server@1.0.0 start
+> node index.js
+
+[dotenv@17.2.3] injecting env (10) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+Server listening on 4000

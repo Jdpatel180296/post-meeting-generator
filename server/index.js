@@ -1079,7 +1079,10 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log("Server listening on", PORT));
+const HOST = process.env.HOST || "0.0.0.0"; // Bind to all interfaces for Railway
+app.listen(PORT, HOST, () =>
+  console.log(`Server listening on ${HOST}:${PORT}`)
+);
 
 // CORS debug utility endpoint
 app.get("/cors-debug", (req, res) => {

@@ -280,7 +280,7 @@ app.get("/api/auth/linkedin/callback", async (req, res) => {
       platform: "linkedin",
       access_token: accessToken,
       refresh_token: null,
-      platform_user_id: linkedinId,
+      provider_id: linkedinId,
       expires_at: new Date(Date.now() + expiresIn * 1000),
     });
 
@@ -381,7 +381,7 @@ app.get("/api/auth/facebook/callback", async (req, res) => {
       platform: "facebook",
       access_token: accessToken,
       refresh_token: null,
-      platform_user_id: facebookId,
+      provider_id: facebookId,
       expires_at: null,
     });
 

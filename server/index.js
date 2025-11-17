@@ -53,8 +53,8 @@ app.use((req, res, next) => {
 });
 
 app.use(cors(corsOptions));
-// Explicitly handle preflight for all routes
-app.options("*", cors(corsOptions));
+// Explicitly handle preflight for all routes - use regex to avoid path-to-regexp '*' error
+app.options(/.*/, cors(corsOptions));
 app.use(bodyParser.json());
 app.use(
   session({

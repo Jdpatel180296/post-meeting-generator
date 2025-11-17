@@ -19,12 +19,12 @@ WORKDIR /app/server
 COPY --from=server-builder /app/server/node_modules ./node_modules
 COPY --from=server-builder /app/server ./
 
-# Expose port
-EXPOSE 4000
+# Expose port (Railway will override with PORT env var)
+EXPOSE 8080
 
-# Health check (allow 200 or 401 depending on session state)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:4000/api/accounts', (r) => {if (r.statusCode !== 200 && r.statusCode !== 401) throw new Error(r.statusCode)})"
+# Health check using PORT env var and /health endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 8080) + '/health', (r) => { if (r.statusCode !== 200) process.exit(1); r.on('data', ()=>{}); }).on('error', () => process.exit(1))"
 
 # Start server (run migrations, then start)
 CMD ["npm", "run", "start:prod"]

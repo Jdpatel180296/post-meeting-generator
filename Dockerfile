@@ -4,7 +4,7 @@
 #   which Railway injects when you attach the Postgres service.
 
 # Build stage: install server dependencies
-FROM node:18-alpine AS server-builder
+FROM node:20-alpine AS server-builder
 WORKDIR /app/server
 COPY server/package*.json ./
 # Use npm install to support builds without a lockfile; omit dev deps for smaller image
@@ -12,7 +12,7 @@ RUN npm install --omit=dev
 COPY server ./
 
 # Runtime stage
-FROM node:18-alpine
+FROM node:20-alpine
 WORKDIR /app/server
 
 # Copy node_modules and server sources

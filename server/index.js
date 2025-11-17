@@ -34,14 +34,47 @@ if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
 }
 
-// CORS configuration for production
+// Build allowed origins from env
+function buildAllowedOrigins() {
+  const list = new Set();
+  const push = (v) => v && list.add(v);
+  // Comma separated list supported
+  (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .forEach(push);
+  push(process.env.FRONTEND_URL);
+  push(process.env.BACKEND_URL);
+  if (process.env.NODE_ENV !== "production") {
+    push("http://localhost:3000");
+    push("http://localhost:4000");
+  }
+  return Array.from(list);
+}
+
+const allowedOrigins = buildAllowedOrigins();
+console.log("[CORS] Allowed origins:", allowedOrigins);
+
+// CORS configuration
 const corsOptions = {
-  origin:
-    process.env.NODE_ENV === "production"
-      ? [process.env.FRONTEND_URL, process.env.BACKEND_URL].filter(Boolean)
-      : ["http://localhost:3000", "http://localhost:4000"],
+  origin: function (origin, callback) {
+    // Some non-browser requests have no origin; allow them
+    if (!origin) return callback(null, true);
+    const ok = allowedOrigins.includes(origin);
+    if (ok) return callback(null, true);
+    console.warn("[CORS] Blocked origin:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
   optionsSuccessStatus: 200,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+  ],
 };
 
 // Log the CORS origin and incoming Origin for easier diagnostics
@@ -49,6 +82,12 @@ app.use((req, res, next) => {
   if (req.headers.origin) {
     console.log("[CORS] Origin:", req.headers.origin);
   }
+  next();
+});
+
+// Inform caches that responses vary by Origin
+app.use((req, res, next) => {
+  res.header("Vary", "Origin");
   next();
 });
 

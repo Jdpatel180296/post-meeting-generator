@@ -470,10 +470,13 @@ app.get("/api/events", async (req, res) => {
   const demoUser = getDemoUserId(req);
   const accounts = LINKED_ACCOUNTS_STORE[demoUser] || [];
   const now = new Date();
+  // Start from beginning of today (midnight) to include events that already started today
+  const timeMinDate = new Date(now);
+  timeMinDate.setHours(0, 0, 0, 0);
   // limit events to a 2-month window to avoid returning events decades in the future
   const timeMaxDate = new Date(now);
   timeMaxDate.setMonth(timeMaxDate.getMonth() + 2);
-  const timeMinIso = now.toISOString();
+  const timeMinIso = timeMinDate.toISOString();
   const timeMaxIso = timeMaxDate.toISOString();
 
   const allEvents = [];
@@ -520,10 +523,13 @@ app.get("/api/events/debug", async (req, res) => {
     const demoUser = getDemoUserId(req);
     const accounts = LINKED_ACCOUNTS_STORE[demoUser] || [];
     const now = new Date();
+    // Start from beginning of today (midnight) to include events that already started today
+    const timeMinDate = new Date(now);
+    timeMinDate.setHours(0, 0, 0, 0);
     // limit events to a 2-month window so debug output stays small and relevant
     const timeMaxDate = new Date(now);
     timeMaxDate.setMonth(timeMaxDate.getMonth() + 2);
-    const timeMinIso = now.toISOString();
+    const timeMinIso = timeMinDate.toISOString();
     const timeMaxIso = timeMaxDate.toISOString();
 
     const allEvents = [];

@@ -23,7 +23,13 @@ const { google } = require("googleapis");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const axios = require("axios");
-const { transcribeUrl } = require("./utils/assemblyClient");
+let transcribeUrl;
+try {
+  ({ transcribeUrl } = require("./utils/assemblyClient"));
+} catch (e) {
+  console.error("[assemblyClient] Failed to load, using stub:", e.message);
+  transcribeUrl = async () => ({ text: null, stub: true });
+}
 const path = require("path");
 
 const app = express();
@@ -99,6 +105,11 @@ app.use((req, res, next) => {
   res.header("Vary", "Origin");
   next();
 });
+
+// Simple health check early so platform can detect readiness
+app.get("/health", (req, res) =>
+  res.json({ ok: true, uptime: process.uptime() })
+);
 
 app.use(cors(corsOptions));
 // Explicitly handle preflight for all routes - use regex to avoid path-to-regexp '*' error

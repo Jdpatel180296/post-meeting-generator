@@ -37,7 +37,11 @@ if (process.env.NODE_ENV === "production") {
 // Build allowed origins from env
 function buildAllowedOrigins() {
   const list = new Set();
-  const push = (v) => v && list.add(v);
+  const normalize = (o) => (o ? o.replace(/\/$/, "") : o); // strip trailing slash
+  const push = (v) => {
+    if (!v) return;
+    list.add(normalize(v));
+  };
   // Comma separated list supported
   (process.env.ALLOWED_ORIGINS || "")
     .split(",")
@@ -61,14 +65,19 @@ const corsOptions = {
   origin: function (origin, callback) {
     // Some non-browser requests have no origin; allow them
     if (!origin) return callback(null, true);
-    const ok = allowedOrigins.includes(origin);
-    if (ok) return callback(null, true);
-    console.warn("[CORS] Blocked origin:", origin);
+    const normalized = origin.replace(/\/$/, "");
+    const ok = allowedOrigins.includes(normalized);
+    if (ok) {
+      console.log("[CORS] Allowed origin:", origin);
+      return callback(null, true);
+    }
+    console.warn("[CORS] Blocked origin:", origin, "normalized:", normalized);
     return callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  // Let default header whitelist apply; if you need custom headers add them here.
   allowedHeaders: [
     "Content-Type",
     "Authorization",
@@ -1060,6 +1069,15 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log("Server listening on", PORT));
+
+// CORS debug utility endpoint
+app.get("/cors-debug", (req, res) => {
+  res.json({
+    incomingOrigin: req.headers.origin || null,
+    allowedOrigins,
+    nodeEnv: process.env.NODE_ENV,
+  });
+});
 
 // Serve static React frontend in production
 // If client build/ exists, copy it to server/public and this will serve it

@@ -55,9 +55,9 @@ function backoffDelay(baseMs, attempt, maxMs = 30000) {
 async function waitForDb({ retries = 60, delayMs = 2000 } = {}) {
   const cfg = buildConfig();
   console.log(
-    `[waitForDb] Connecting using ${
-      cfg.useUrl ? "DATABASE_URL" : "PG envs"
-    }: ${cfg.debugLabel}`
+    `[waitForDb] Connecting using ${cfg.useUrl ? "DATABASE_URL" : "PG envs"}: ${
+      cfg.debugLabel
+    }`
   );
   for (let attempt = 1; attempt <= retries; attempt++) {
     const client = new Client(cfg.useUrl ? cfg : { ...cfg });

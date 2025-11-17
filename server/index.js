@@ -59,6 +59,7 @@ function buildAllowedOrigins() {
   if (process.env.NODE_ENV !== "production") {
     push("http://localhost:3000");
     push("http://localhost:4000");
+    push("https://9lrg68wq-3000.usw3.devtunnels.ms");
   }
   return Array.from(list);
 }
@@ -119,7 +120,8 @@ app.use(
   session({
     secret: process.env.SESSION_SECRET || "dev-secret",
     resave: false,
-    saveUninitialized: true,
+    // Do not create sessions until something is stored
+    saveUninitialized: false,
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
@@ -135,7 +137,8 @@ const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID";
 const CLIENT_SECRET =
   process.env.GOOGLE_CLIENT_SECRET || "YOUR_GOOGLE_CLIENT_SECRET";
 const REDIRECT_URI =
-  process.env.GOOGLE_REDIRECT_URI || "http://localhost:4000/oauth2callback";
+  process.env.GOOGLE_REDIRECT_URI ||
+  "https://9lrg68wq-3000.usw3.devtunnels.ms/oauth2callback";
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "openid",
@@ -146,15 +149,24 @@ const SCOPES = [
 const oauth2ClientFactory = () =>
   new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 
-// In-memory store: map demoUserId -> array of accounts {id, email, tokens}
-const LINKED_ACCOUNTS_STORE = {
-  // demo user id 1 for everyone in this demo
-  "demo-user": [],
-};
+// In-memory store: map userKey -> array of accounts {id, email, tokens}
+// userKey is per-session by default and becomes the user's email after OAuth
+const LINKED_ACCOUNTS_STORE = {};
 
-// Helper: get demo user id (in prod use real auth)
-function getDemoUserId(req) {
-  return "demo-user";
+// Helper: per-session/user identity. Before OAuth, assign an anonymous key.
+// After OAuth, we set req.session.userKey to the user's email for persistence.
+function getUserKey(req) {
+  try {
+    if (req?.session?.userKey) return req.session.userKey;
+    // generate a short anon key and persist in session
+    const crypto = require("crypto");
+    const anon = `anon-${crypto.randomBytes(8).toString("hex")}`;
+    if (req?.session) req.session.userKey = anon;
+    return anon;
+  } catch (e) {
+    // fallback if session missing for some reason
+    return "anon-fallback";
+  }
 }
 
 app.get("/auth/url", (req, res) => {
@@ -181,13 +193,18 @@ app.get("/oauth2callback", async (req, res) => {
     const profile = await oauth2.userinfo.get();
     const account = { id: profile.data.id, email: profile.data.email, tokens };
 
-    const demoUser = getDemoUserId(req);
+    // bind session to user's email after successful OAuth
+    if (account.email) {
+      if (req?.session) req.session.userKey = account.email;
+    }
+
+    const userKey = getUserKey(req);
     // allow multiple accounts; avoid duplicate email
-    LINKED_ACCOUNTS_STORE[demoUser] = LINKED_ACCOUNTS_STORE[demoUser] || [];
-    const exists = LINKED_ACCOUNTS_STORE[demoUser].some(
+    LINKED_ACCOUNTS_STORE[userKey] = LINKED_ACCOUNTS_STORE[userKey] || [];
+    const exists = LINKED_ACCOUNTS_STORE[userKey].some(
       (a) => a.email === account.email
     );
-    if (!exists) LINKED_ACCOUNTS_STORE[demoUser].push(account);
+    if (!exists) LINKED_ACCOUNTS_STORE[userKey].push(account);
 
     // redirect back to client app (support both dev and production)
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
@@ -269,10 +286,10 @@ app.get("/api/auth/linkedin/callback", async (req, res) => {
 
     // Save to database
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    let user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    let user = await db.getUserByEmail(userKey);
     if (!user) {
-      user = await db.createUser(demoUser);
+      user = await db.createUser(userKey);
     }
 
     await db.saveSocialMediaAccount({
@@ -370,10 +387,10 @@ app.get("/api/auth/facebook/callback", async (req, res) => {
 
     // Save to database
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    let user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    let user = await db.getUserByEmail(userKey);
     if (!user) {
-      user = await db.createUser(demoUser);
+      user = await db.createUser(userKey);
     }
 
     await db.saveSocialMediaAccount({
@@ -405,8 +422,8 @@ app.delete("/api/social-accounts/:platform", async (req, res) => {
     }
 
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    const user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    const user = await db.getUserByEmail(userKey);
     if (!user) return res.status(404).json({ error: "User not found" });
 
     await db
@@ -461,14 +478,14 @@ app.post("/api/transcribe-assembly", async (req, res) => {
 
 // List connected accounts
 app.get("/api/accounts", (req, res) => {
-  const demoUser = getDemoUserId(req);
-  res.json(LINKED_ACCOUNTS_STORE[demoUser] || []);
+  const userKey = getUserKey(req);
+  res.json(LINKED_ACCOUNTS_STORE[userKey] || []);
 });
 
 // Fetch upcoming events from all linked accounts
 app.get("/api/events", async (req, res) => {
-  const demoUser = getDemoUserId(req);
-  const accounts = LINKED_ACCOUNTS_STORE[demoUser] || [];
+  const userKey = getUserKey(req);
+  const accounts = LINKED_ACCOUNTS_STORE[userKey] || [];
   const now = new Date();
   // Start from 24 hours ago to catch events across all timezones
   const timeMinDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -519,8 +536,8 @@ app.get("/api/events", async (req, res) => {
 // Debug endpoint: return events plus detected link candidates (hangoutLink, location, conference entryPoints)
 app.get("/api/events/debug", async (req, res) => {
   try {
-    const demoUser = getDemoUserId(req);
-    const accounts = LINKED_ACCOUNTS_STORE[demoUser] || [];
+    const userKey = getUserKey(req);
+    const accounts = LINKED_ACCOUNTS_STORE[userKey] || [];
     const now = new Date();
     // Start from 24 hours ago to catch events across all timezones
     const timeMinDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -901,8 +918,8 @@ app.get("/api/meetings/:id/posts", async (req, res) => {
 app.get("/api/social-accounts", async (req, res) => {
   try {
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    const user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    const user = await db.getUserByEmail(userKey);
     if (!user) return res.json([]);
     const accounts = await db.getSocialMediaAccounts(user.id);
     res.json(accounts);
@@ -916,8 +933,8 @@ app.get("/api/social-accounts", async (req, res) => {
 app.get("/api/automations", async (req, res) => {
   try {
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    const user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    const user = await db.getUserByEmail(userKey);
     if (!user) return res.json([]);
     const automations = await db.getAutomationsByUser(user.id);
     res.json(automations);
@@ -974,10 +991,10 @@ app.post("/api/automations", async (req, res) => {
       return res.status(400).json({ error: "platform and name required" });
 
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    let user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    let user = await db.getUserByEmail(userKey);
     if (!user) {
-      user = await db.createUser(demoUser);
+      user = await db.createUser(userKey);
     }
 
     const automation = await db.createAutomation({
@@ -1038,8 +1055,8 @@ app.post("/api/posts/:id/publish", async (req, res) => {
 app.get("/api/settings", async (req, res) => {
   try {
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    let user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    let user = await db.getUserByEmail(userKey);
     if (!user) return res.json({ join_lead_minutes: 5 });
     const settings = await db.getUserSettings(user.id);
     res.json(settings || { join_lead_minutes: 5 });
@@ -1054,10 +1071,10 @@ app.post("/api/settings", async (req, res) => {
   try {
     const { join_lead_minutes } = req.body;
     const db = require("./db");
-    const demoUser = getDemoUserId(req);
-    let user = await db.getUserByEmail(demoUser);
+    const userKey = getUserKey(req);
+    let user = await db.getUserByEmail(userKey);
     if (!user) {
-      user = await db.createUser(demoUser);
+      user = await db.createUser(userKey);
     }
 
     const settings = await db.saveUserSettings(user.id, { join_lead_minutes });

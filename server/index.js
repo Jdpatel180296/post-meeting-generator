@@ -782,7 +782,7 @@ app.get("/api/notetaker-flags", (req, res) => {
 app.get("/api/past-meetings", async (req, res) => {
   try {
     const db = require("./db");
-    // Get all meetings with transcripts (not filtered by user for now)
+    // Include attendees + platform_link so UI can show participant count and platform logo/link.
     const meetings = await db
       .knex("meetings")
       .leftJoin("recall_media", "meetings.id", "recall_media.meeting_id")
@@ -792,6 +792,8 @@ app.get("/api/past-meetings", async (req, res) => {
         "meetings.start_time as start",
         "meetings.end_time as end",
         "meetings.platform",
+        "meetings.platform_link",
+        "meetings.attendees",
         db.knex.raw("recall_media.transcript IS NOT NULL as has_transcript")
       )
       .where("meetings.start_time", "<", db.knex.fn.now())
@@ -1104,6 +1106,9 @@ const HOST = process.env.HOST || "0.0.0.0"; // Bind to all interfaces for Railwa
 app.listen(PORT, HOST, () =>
   console.log(`Server listening on ${HOST}:${PORT}`)
 );
+
+// Export app for testability (supertest) without requiring a live network listener
+module.exports = app;
 
 // CORS debug utility endpoint
 app.get("/cors-debug", (req, res) => {

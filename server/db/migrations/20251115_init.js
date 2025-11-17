@@ -1,66 +1,11 @@
 // server/db/migrations/20251115_init.js
-exports.up = async function (knex) {
-  // users
-  await knex.schema.createTable("users", (t) => {
-    t.uuid("id").primary().defaultTo(knex.raw("gen_random_uuid()"));
-    t.text("email").unique().notNullable();
-    t.timestamp("created_at").defaultTo(knex.fn.now());
-  });
-
-  // google accounts
-  await knex.schema.createTable("google_accounts", (t) => {
-    t.uuid("id").primary().defaultTo(knex.raw("gen_random_uuid()"));
-    t.uuid("user_id").references("id").inTable("users");
-    t.text("google_user_id");
-    t.text("email");
-    t.text("access_token");
-    t.text("refresh_token");
-    t.text("scope");
-    t.timestamp("token_expires_at");
-    t.timestamp("created_at").defaultTo(knex.fn.now());
-  });
-
-  // meetings
-  await knex.schema.createTable("meetings", (t) => {
-    t.text("id").primary();
-    t.uuid("user_id").references("id").inTable("users");
-    t.uuid("google_account_id").references("id").inTable("google_accounts");
-    t.text("summary");
-    t.timestamp("start_time");
-    t.timestamp("end_time");
-    t.text("platform");
-    t.text("platform_link");
-    t.jsonb("attendees");
-    t.boolean("notetaker_enabled").defaultTo(false);
-    t.timestamp("created_at").defaultTo(knex.fn.now());
-  });
-
-  // recall_bots
-  await knex.schema.createTable("recall_bots", (t) => {
-    t.uuid("id").primary().defaultTo(knex.raw("gen_random_uuid()"));
-    t.text("meeting_id").references("id").inTable("meetings");
-    t.text("recall_bot_id").notNullable();
-    t.text("status");
-    t.timestamp("last_checked_at");
-    t.timestamp("created_at").defaultTo(knex.fn.now());
-  });
-
-  // recall_media
-  await knex.schema.createTable("recall_media", (t) => {
-    t.uuid("id").primary().defaultTo(knex.raw("gen_random_uuid()"));
-    t.text("recall_bot_id");
-    t.text("meeting_id");
-    t.text("audio_url");
-    t.text("video_url");
-    t.text("transcript");
-    t.timestamp("fetched_at").defaultTo(knex.fn.now());
-  });
+// Legacy migration kept for compatibility with earlier deployments.
+// This file is now a no-op because the ordered migration 20251115_01_init.js
+// creates these tables with idempotent guards.
+exports.up = async function () {
+  // no-op
 };
 
-exports.down = async function (knex) {
-  await knex.schema.dropTableIfExists("recall_media");
-  await knex.schema.dropTableIfExists("recall_bots");
-  await knex.schema.dropTableIfExists("meetings");
-  await knex.schema.dropTableIfExists("google_accounts");
-  await knex.schema.dropTableIfExists("users");
+exports.down = async function () {
+  // no-op
 };

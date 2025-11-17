@@ -7,28 +7,54 @@ async function pollOnce() {
   const bots = await db.listPendingBots();
   for (const b of bots) {
     try {
-      const resp = await recall.get(`/bots/${b.recall_bot_id}`);
+      const resp = await recall.get(`/bot/${b.recall_bot_id}/`);
       const data = resp.data || {};
-      const mediaStatus = data.media_status || data.status;
 
-      if (mediaStatus) {
-        await db.updateBotStatus(b.recall_bot_id, mediaStatus);
+      // Get latest status from status_changes array
+      const statusChanges = data.status_changes || [];
+      const latestStatus =
+        statusChanges.length > 0
+          ? statusChanges[statusChanges.length - 1].code
+          : null;
+
+      if (latestStatus) {
+        await db.updateBotStatus(b.recall_bot_id, latestStatus);
+        console.log(`[Poller] Bot ${b.recall_bot_id} status: ${latestStatus}`);
       }
 
+      // Check if bot is done and has recordings
       if (
-        mediaStatus === "available" ||
-        (data.media && Object.keys(data.media).length)
+        latestStatus === "done" &&
+        data.recordings &&
+        data.recordings.length > 0
       ) {
-        const media = data.media || {};
+        const recording = data.recordings[0];
+        const mediaShortcuts = recording.media_shortcuts || {};
 
-        // Transcribe audio using AssemblyAI if audio_url is available
+        // Extract video URL from video_mixed
+        let videoUrl = null;
+        if (mediaShortcuts.video_mixed?.data?.download_url) {
+          videoUrl = mediaShortcuts.video_mixed.data.download_url;
+        }
+
+        // Extract audio URL - check if audio_mixed exists
+        let audioUrl = null;
+        if (mediaShortcuts.audio_mixed?.data?.download_url) {
+          audioUrl = mediaShortcuts.audio_mixed.data.download_url;
+        }
+
+        // Transcribe using AssemblyAI if audio available, otherwise use video
         let transcriptText = null;
-        if (media.audio_url) {
+        const transcribeFrom = audioUrl || videoUrl;
+
+        if (transcribeFrom) {
           try {
             console.log(
-              `[Poller] Transcribing audio for bot ${b.recall_bot_id} with AssemblyAI...`
+              `[Poller] Transcribing ${audioUrl ? "audio" : "video"} for bot ${
+                b.recall_bot_id
+              } with AssemblyAI...`
             );
-            const assemblyResult = await transcribeUrl(media.audio_url);
+            const assemblyResult = await transcribeUrl(transcribeFrom);
             transcriptText = assemblyResult.text || null;
             console.log(
               `[Poller] Transcription completed for bot ${b.recall_bot_id}`
@@ -38,24 +64,18 @@ async function pollOnce() {
               `[Poller] AssemblyAI transcription failed for bot ${b.recall_bot_id}:`,
               transcribeErr.message
             );
-            // Fallback to Recall's transcript if available
-            transcriptText =
-              media.transcript_text || media.transcript_url || null;
           }
-        } else {
-          // No audio URL, try Recall's transcript
-          transcriptText =
-            media.transcript_text || media.transcript_url || null;
         }
 
         await db.saveRecallMedia({
           recall_bot_id: b.recall_bot_id,
           meeting_id: b.meeting_id,
-          audio_url: media.audio_url,
-          video_url: media.video_url,
+          audio_url: audioUrl,
+          video_url: videoUrl,
           transcript: transcriptText,
         });
         await db.updateBotStatus(b.recall_bot_id, "media_available");
+        console.log(`[Poller] Saved media for bot ${b.recall_bot_id}`);
       }
 
       await db.touchBot(b.recall_bot_id);

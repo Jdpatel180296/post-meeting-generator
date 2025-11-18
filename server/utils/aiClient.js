@@ -1,38 +1,73 @@
 // server/utils/aiClient.js
-const axios = require("axios");
+const OpenAI = require("openai");
 
-// Ollama configuration
+// Try OpenAI first, fallback to Ollama if OpenAI key not available
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "mistral";
+const USE_OPENAI = OPENAI_API_KEY && !OPENAI_API_KEY.includes("sk_...");
 
-async function callOllamaChat(messages, opts = {}) {
-  if (!OLLAMA_URL) {
-    throw new Error("OLLAMA_URL not configured in environment");
-  }
+let openai;
+if (USE_OPENAI) {
+  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+}
 
-  try {
-    const res = await axios.post(
-      `${OLLAMA_URL}/api/chat`,
-      {
-        model: OLLAMA_MODEL,
+async function callAI(messages, opts = {}) {
+  if (USE_OPENAI) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: opts.model || "gpt-3.5-turbo",
         messages,
-        ...opts,
-      },
-      { timeout: 120000 }
-    );
-
-    // Ollama's chat API typically returns { choices: [ { message: { content } } ] }
-    if (res.data?.choices?.[0]?.message?.content) {
-      return res.data.choices[0].message.content;
+        max_tokens: opts.max_tokens || 500,
+        temperature: opts.temperature || 0.7,
+      });
+      return response.choices[0]?.message?.content || "";
+    } catch (err) {
+      console.error("OpenAI error:", err.message);
+      throw new Error(`OpenAI API error: ${err.message}`);
     }
+  } else {
+    // Fallback to Ollama
+    const axios = require("axios");
+    try {
+      const res = await axios.post(
+        `${OLLAMA_URL}/api/chat`,
+        {
+          model: OLLAMA_MODEL,
+          messages,
+          stream: false,
+        },
+        { timeout: 120000 }
+      );
 
-    // Fallbacks for different response shapes
-    if (typeof res.data === "string") return res.data;
-    if (res.data?.text) return res.data.text;
-    return JSON.stringify(res.data);
-  } catch (err) {
-    console.error("Ollama error:", err?.response?.data || err.message);
-    throw err;
+      // Ollama returns { message: { content } }
+      if (res.data?.message?.content) {
+        return res.data.message.content;
+      }
+      return res.data?.response || JSON.stringify(res.data);
+    } catch (err) {
+      console.error("Ollama error:", err?.response?.data || err.message);
+
+      // If both OpenAI and Ollama are unavailable, return a helpful demo response
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Using mock AI response for development");
+        const userMessage =
+          messages.find((m) => m.role === "user")?.content || "";
+        if (userMessage.includes("follow-up email")) {
+          return `Subject: Follow-up from our recent meeting\n\nHi team,\n\nThank you for taking the time to meet today. I wanted to follow up on our discussion and summarize the key points:\n\n${
+            userMessage.includes("transcript")
+              ? "Based on our conversation, we covered several important topics and identified next steps for moving forward."
+              : ""
+          }\n\nPlease let me know if you have any questions or need clarification on any points discussed.\n\nBest regards`;
+        } else {
+          return `Excited to share insights from our recent meeting! 🚀\n\nKey takeaways:\n✅ Productive discussion on project goals\n✅ Identified next steps and action items\n✅ Great collaboration and teamwork\n\n#teamwork #productivity #collaboration`;
+        }
+      }
+
+      throw new Error(
+        `AI service not available. Please configure OPENAI_API_KEY in your .env file or start Ollama locally.`
+      );
+    }
   }
 }
 
@@ -55,7 +90,7 @@ async function generateSocialPost({
     { role: "user", content: userMessage },
   ];
 
-  const text = await callOllamaChat(messages, {
+  const text = await callAI(messages, {
     max_tokens: 500,
     temperature: 0.7,
   });
@@ -74,7 +109,7 @@ async function generateFollowUpEmail({ transcript, meetingSummary }) {
     { role: "user", content: user },
   ];
 
-  const text = await callOllamaChat(messages, {
+  const text = await callAI(messages, {
     max_tokens: 800,
     temperature: 0.7,
   });

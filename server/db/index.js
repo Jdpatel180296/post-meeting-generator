@@ -229,4 +229,37 @@ module.exports = {
     const transcript = media.length > 0 ? media[0].transcript : null;
     return { ...meeting, transcript, media };
   },
+
+  // ===== NOTETAKER PREFERENCES (Persistent) =====
+  async saveNotetakerPreference({ user_email, event_id, enabled }) {
+    if (!user_email || !event_id) return null;
+    // Only persist if we have a real email (rudimentary check)
+    if (!user_email.includes("@")) return null;
+    let user = await this.getUserByEmail(user_email);
+    if (!user) {
+      const created = await this.createUser(user_email);
+      // createUser returns an array (due to returning(*)) or object depending on pg version
+      user = Array.isArray(created) ? created[0] : created;
+    }
+    const row = await knex("notetaker_preferences")
+      .insert({ user_id: user.id, event_id, enabled })
+      .onConflict(["user_id", "event_id"]) // upsert
+      .merge({ enabled, updated_at: knex.fn.now() })
+      .returning("*");
+    return Array.isArray(row) ? row[0] : row;
+  },
+
+  async getNotetakerFlagsForUser(user_email) {
+    if (!user_email || !user_email.includes("@")) return {};
+    const user = await this.getUserByEmail(user_email);
+    if (!user) return {};
+    const rows = await knex("notetaker_preferences")
+      .where({ user_id: user.id })
+      .select("event_id", "enabled");
+    const flags = {};
+    rows.forEach((r) => {
+      flags[r.event_id] = !!r.enabled;
+    });
+    return flags;
+  },
 };

@@ -763,17 +763,50 @@ app.post("/api/schedule-recall-bot", async (req, res) => {
   }
 });
 
-// In-memory notetaker flags: eventId -> boolean
+// In-memory cache for instant UI feedback; persisted copy stored in notetaker_preferences.
 const NOTETAKER_FLAGS = {};
-app.post("/api/toggle-notetaker", (req, res) => {
-  const { id, enabled } = req.body;
-  if (!id) return res.status(400).send("Missing id");
-  NOTETAKER_FLAGS[id] = !!enabled;
-  res.json({ id, enabled: NOTETAKER_FLAGS[id] });
+app.post("/api/toggle-notetaker", async (req, res) => {
+  try {
+    const { id, enabled } = req.body;
+    if (!id) return res.status(400).send("Missing id");
+    NOTETAKER_FLAGS[id] = !!enabled;
+    // Persist if we have an authenticated user (email userKey)
+    const userKey = getUserKey(req);
+    try {
+      const db = require("./db");
+      await db.saveNotetakerPreference({
+        user_email: userKey,
+        event_id: id,
+        enabled: !!enabled,
+      });
+    } catch (e) {
+      console.warn("[Notetaker] persistence skipped:", e.message);
+    }
+    res.json({
+      id,
+      enabled: NOTETAKER_FLAGS[id],
+      persisted: userKey.includes("@"),
+    });
+  } catch (err) {
+    console.error("/api/toggle-notetaker error", err);
+    res.status(500).json({ error: "failed to toggle", details: err.message });
+  }
 });
 
-app.get("/api/notetaker-flags", (req, res) => {
-  res.json(NOTETAKER_FLAGS);
+app.get("/api/notetaker-flags", async (req, res) => {
+  try {
+    const userKey = getUserKey(req);
+    const db = require("./db");
+    const persisted = await db.getNotetakerFlagsForUser(userKey);
+    // Merge persisted with in-memory (in-memory wins for current session immediacy)
+    const merged = { ...persisted, ...NOTETAKER_FLAGS };
+    res.json(merged);
+  } catch (err) {
+    console.error("/api/notetaker-flags error", err);
+    res
+      .status(500)
+      .json({ error: "failed to load flags", details: err.message });
+  }
 });
 
 // ===== SOCIAL MEDIA & POSTS ENDPOINTS =====

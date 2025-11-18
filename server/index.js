@@ -222,6 +222,24 @@ app.get("/oauth2callback", async (req, res) => {
 // LinkedIn auth URL
 app.get("/api/auth/linkedin", (req, res) => {
   const clientId = process.env.LINKEDIN_CLIENT_ID || "your_linkedin_client_id";
+  const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+  const redirectRaw = process.env.LINKEDIN_REDIRECT_URI;
+  // If placeholder or missing credentials, return helpful error rather than broken OAuth URL.
+  if (
+    !process.env.LINKEDIN_CLIENT_ID ||
+    clientId === "your_linkedin_client_id" ||
+    !clientSecret ||
+    !redirectRaw
+  ) {
+    return res.status(400).json({
+      error: "LinkedIn credentials not configured",
+      required: [
+        "LINKEDIN_CLIENT_ID",
+        "LINKEDIN_CLIENT_SECRET",
+        "LINKEDIN_REDIRECT_URI",
+      ],
+    });
+  }
   const redirectUri = encodeURIComponent(
     process.env.LINKEDIN_REDIRECT_URI ||
       "http://localhost:4000/api/auth/linkedin/callback"
@@ -317,6 +335,23 @@ app.get("/api/auth/linkedin/callback", async (req, res) => {
 // Facebook auth URL
 app.get("/api/auth/facebook", (req, res) => {
   const appId = process.env.FACEBOOK_APP_ID || "your_facebook_app_id";
+  const appSecret = process.env.FACEBOOK_APP_SECRET;
+  const redirectRaw = process.env.FACEBOOK_REDIRECT_URI;
+  if (
+    !process.env.FACEBOOK_APP_ID ||
+    appId === "your_facebook_app_id" ||
+    !appSecret ||
+    !redirectRaw
+  ) {
+    return res.status(400).json({
+      error: "Facebook credentials not configured",
+      required: [
+        "FACEBOOK_APP_ID",
+        "FACEBOOK_APP_SECRET",
+        "FACEBOOK_REDIRECT_URI",
+      ],
+    });
+  }
   const redirectUri = encodeURIComponent(
     process.env.FACEBOOK_REDIRECT_URI ||
       "http://localhost:4000/api/auth/facebook/callback"

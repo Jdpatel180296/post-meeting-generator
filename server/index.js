@@ -850,7 +850,17 @@ app.get("/api/notetaker-flags", async (req, res) => {
 app.get("/api/past-meetings", async (req, res) => {
   try {
     const db = require("./db");
+    const userKey = getUserKey(req);
+
+    // Get user to filter meetings
+    let user = await db.getUserByEmail(userKey);
+    if (!user) {
+      // If user doesn't exist yet, return empty array (no meetings possible)
+      return res.json([]);
+    }
+
     // Include attendees + platform_link so UI can show participant count and platform logo/link.
+    // Filter by user_id to show only current user's meetings
     const meetings = await db
       .knex("meetings")
       .leftJoin("recall_media", "meetings.id", "recall_media.meeting_id")
@@ -865,6 +875,7 @@ app.get("/api/past-meetings", async (req, res) => {
         db.knex.raw("recall_media.transcript IS NOT NULL as has_transcript")
       )
       .where("meetings.start_time", "<", db.knex.fn.now())
+      .where("meetings.user_id", user.id)
       .orderBy("meetings.start_time", "desc");
 
     res.json(meetings);
@@ -1020,10 +1031,24 @@ app.post("/api/meetings", async (req, res) => {
     const meeting = req.body;
     if (!meeting || !meeting.id)
       return res.status(400).json({ error: "meeting id required" });
+
     const db = require("./db");
+    const userKey = getUserKey(req);
+
+    // Get or create user to associate meeting
+    let user = await db.getUserByEmail(userKey);
+    if (!user) {
+      const created = await db.createUser(userKey);
+      user = Array.isArray(created) ? created[0] : created;
+    }
+
+    // Add user_id to meeting data
+    meeting.user_id = user.id;
+
     const saved = await db.createOrUpdateMeeting(meeting);
     console.log("[Meetings] saved meeting", {
       id: saved.id,
+      user_id: saved.user_id,
       meeting_url: saved.meeting_url || null,
       location: saved.location || null,
       summary: saved.summary || null,
